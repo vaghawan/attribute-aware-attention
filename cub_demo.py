@@ -9,6 +9,9 @@ import numpy as np
 np.random.seed(2208)  # for reproducibility
 
 import time
+import keras
+from keras import backend as K
+K.set_image_dim_ordering('th')
 from keras.preprocessing.image import ImageDataGenerator
 from keras.layers import Input, Dense, RepeatVector, Permute, merge
 from keras.layers import BatchNormalization, Lambda, Bidirectional, GRU
@@ -101,27 +104,34 @@ for i in range(len(nb_attributes)):
 region_score_map_list = []
 attr_score_list = []
 for i in range(len(nb_attributes)):
-    attn1 = merge([id_fea_map,attr_fea_list[i]], mode='dot', dot_axes=(2,1)) 
-    fea_score = merge([id_pool,attr_fea_list[i]], mode='dot', dot_axes=(1,1))
+    #attn1 = merge([id_fea_map,attr_fea_list[i]], mode='dot', dot_axes=(2,1)) 
+    attn1 = keras.layers.Dot(axes=(2,1))([id_fea_map,attr_fea_list[i]])
+    #fea_score = merge([id_pool,attr_fea_list[i]], mode='dot', dot_axes=(1,1))
+    fea_score = keras.layers.Dot(axes=(1,1))([id_pool,attr_fea_list[i]])
     region_score_map_list.append(attn1)
     attr_score_list.append(fea_score)
 
 # regional feature fusion
-region_score_map = merge(region_score_map_list, mode='ave', name='attn')
+#region_score_map = merge(region_score_map_list, mode='ave', name='attn')
+region_score_map = keras.layers.Average(name='attn')(region_score_map_list) 
 region_score_map = BatchNormalization()(region_score_map)
 region_score_map = Activation('sigmoid', name='region_attention')(region_score_map)
-region_fea = merge([id_fea_map,region_score_map], mode='dot', dot_axes=(1,1))
+#region_fea = merge([id_fea_map,region_score_map], mode='dot', dot_axes=(1,1))
+region_fea = keras.layers.Dot(axes=(1,1))([id_fea_map,region_score_map])
 region_fea = Lambda(lambda x: x*(1.0/L))(region_fea)
 region_fea = BatchNormalization()(region_fea)
 
 # attribute feature fusion
-attr_scores = merge(attr_score_list, mode='concat')
+# attr_scores = merge(attr_score_list, mode='concat')
+attr_scores = keras.layers.Concatenate()(attr_score_list)
 attr_scores = BatchNormalization()(attr_scores)
 attr_scores = Activation('sigmoid')(attr_scores)
-attr_fea = merge(attr_fea_list, mode='concat')
+# attr_fea = merge(attr_fea_list, mode='concat')
+attr_fea = keras.layers.Concatenate()(attr_fea_list)
 attr_fea = Reshape((emb_dim, len(nb_attributes)))(attr_fea) 
 equal_attr_fea = GlobalAveragePooling1D()(attr_fea)
-attr_fea = merge([attr_fea,attr_scores], mode='dot', dot_axes=(2,1))
+# attr_fea = merge([attr_fea,attr_scores], mode='dot', dot_axes=(2,1))
+attr_fea = keras.layers.Dot(axes=(2,1))([attr_fea,attr_scores])
 attr_fea = Lambda(lambda x: x*(1.0/len(nb_attributes)))(attr_fea)
 attr_fea = BatchNormalization()(attr_fea)
 
@@ -130,7 +140,8 @@ if(attr_equal):
     attr_fea = equal_attr_fea
 if(region_equal):
     region_fea = id_pool
-final_fea = merge([attr_fea,region_fea], mode='concat')
+# final_fea = merge([attr_fea,region_fea], mode='concat')
+final_fea = keras.layers.Concatenate()([attr_fea,region_fea])
 final_fea = Activation('relu', name='final_fea')(final_fea)
 final_fea = Dropout(dropout)(final_fea)
 final_prob = Dense(nb_classes)(final_fea)
